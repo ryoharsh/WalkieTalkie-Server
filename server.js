@@ -87,6 +87,48 @@ mongoose.connect(MONGO_URI).then(() => console.log('Connected to MongoDB'))
         }
     });
 
+    function waitForIce(peer) {
+        return new Promise(resolve => {
+            if (peer.iceGatheringState === 'complete') {
+                resolve();
+                return;
+            }
+
+            const checkState = () => {
+                if (peer.iceGatheringState === 'complete') {
+                    peer.removeEventListener('icegatheringstatechange', checkState);
+                    resolve();
+                }
+            };
+
+            peer.addEventListener('icegatheringstatechange', checkState);
+
+            // SOLUTION: 2000ms (2 second) ka timeout lagaya hai.
+            // Agar 2 second me gathering complete nahi hui, toh force resolve kar denge.
+            // Isse stream 10s ki jagah max 2s me start ho jayegi.
+            setTimeout(() => {
+                peer.removeEventListener('icegatheringstatechange', checkState);
+                resolve();
+            }, 2000);
+        });
+    }
+
+//    const waitForIce = (peer) => {
+//        return new Promise((resolve) => {
+//            if (peer.iceGatheringState === 'complete') {
+//                resolve();
+//            } else {
+//                const checkState = () => {
+//                    if (peer.iceGatheringState === 'complete') {
+//                        peer.removeEventListener('icegatheringstatechange', checkState);
+//                        resolve();
+//                    }
+//                };
+//                peer.addEventListener('icegatheringstatechange', checkState);
+//            }
+//        });
+//    };
+
     app.post('/broadcast', async (req, res) => {
         const { streamId, sdp } = req.body;
         console.log('Broadcast received with streamId:', streamId);
@@ -101,8 +143,8 @@ mongoose.connect(MONGO_URI).then(() => console.log('Connected to MongoDB'))
         });
     
         peer.ontrack = (e) => {
-            console.log('Track received for streamId:', streamId);
             streams.set(streamId, e.streams[0]);
+            console.log('Track received for streamId:', streamId);
         };
     
         const desc = new webrtc.RTCSessionDescription(sdp);
@@ -111,6 +153,8 @@ mongoose.connect(MONGO_URI).then(() => console.log('Connected to MongoDB'))
             await peer.setRemoteDescription(desc);
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
+
+            await waitForIce(peer);
     
             res.json({ sdp: peer.localDescription });
         } catch (err) {
@@ -133,9 +177,9 @@ mongoose.connect(MONGO_URI).then(() => console.log('Connected to MongoDB'))
         });
     
         const stream = streams.get(streamId);
-        console.log("Retrieved stream for streamId:", streamId);
-    
         stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+        console.log("Retrieved stream for streamId:", streamId);
     
         const desc = new webrtc.RTCSessionDescription(sdp);
     
@@ -143,6 +187,8 @@ mongoose.connect(MONGO_URI).then(() => console.log('Connected to MongoDB'))
             await peer.setRemoteDescription(desc);
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
+
+            await waitForIce(peer);
     
             res.json({ sdp: peer.localDescription });
         } catch (err) {
